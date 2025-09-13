@@ -17,7 +17,7 @@ npm i -g pnpm
 Clone Xehcord:
 
 ```shell
-git clone https://github.com/7xeh/Equicord
+git clone https://github.com/7xeh/Xehcord
 cd Equicord
 ```
 
