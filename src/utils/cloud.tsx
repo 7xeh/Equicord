@@ -19,10 +19,11 @@
 import * as DataStore from "@api/DataStore";
 import { showNotification } from "@api/Notifications";
 import { Settings } from "@api/Settings";
-import { OAuth2AuthorizeModal, UserStore } from "@webpack/common";
+import { Alerts, OAuth2AuthorizeModal, UserStore } from "@webpack/common";
 
 import { Logger } from "./Logger";
 import { openModal } from "./modal";
+import { relaunch } from "./native";
 
 export const cloudLogger = new Logger("Cloud", "#39b7e0");
 
@@ -34,6 +35,43 @@ const getUserId = () => {
     if (!id) throw new Error("User not yet logged in");
     return id;
 };
+
+// Ensure the current Cloud URL is permitted by the host app's CSP. If we just
+// added an override, request a restart and return false so callers can abort
+// the current flow.
+export async function checkCloudUrlCsp() {
+    // On web/extension/userscript builds there is no native CSP to manage
+    if (IS_WEB) return true;
+
+    const { host } = getCloudUrl();
+    // Known official hosts are pre-allowed
+    if (host === "api.vencord.dev") return true;
+    if (host === "cloud.equicord.org") return true;
+
+    // If already allowed, proceed
+    if (await VencordNative.csp.isDomainAllowed(Settings.cloud.url, ["connect-src"])) {
+        return true;
+    }
+
+    // Otherwise, request an override and ask user to restart to apply it
+    const res = await VencordNative.csp.requestAddOverride(
+        Settings.cloud.url,
+        ["connect-src"],
+        "Cloud Sync"
+    );
+
+    if (res === "ok") {
+        Alerts.show({
+            title: "Cloud Integrations",
+            body: "A CSP override was added for your Cloud URL. Please restart to apply the change.",
+            confirmText: "Restart",
+            onConfirm: IS_WEB ? () => location.reload() : relaunch,
+            cancelText: "Later"
+        });
+    }
+
+    return false;
+}
 
 export async function getAuthorization() {
     const secrets = await DataStore.get<Record<string, string>>("Vencord_cloudSecret") ?? {};
@@ -78,6 +116,9 @@ export async function authorizeCloud() {
         Settings.cloud.authenticated = true;
         return;
     }
+
+    // Ensure CSP allows connecting to the configured Cloud host
+    if (!await checkCloudUrlCsp()) return;
 
     try {
         const oauthConfiguration = await fetch(new URL("/v1/oauth/settings", getCloudUrl()));
